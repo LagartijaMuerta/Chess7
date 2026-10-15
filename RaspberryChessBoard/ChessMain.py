@@ -38,6 +38,29 @@ IMAGES = {}
 # Software‑Schalter: True = lokale Steuerung (Maus/Tastatur) aktiv
 SOFTWARE_SWITCH = True
 
+# Hilfe‑Modus: 1=Keine, 2=ein, 3=voll
+HELP_MODE = 1
+
+
+def set_help_mode(mode: int):
+    global HELP_MODE
+    try:
+        m = int(mode)
+    except Exception:
+        return
+    if m < 1 or m > 3:
+        return
+    HELP_MODE = m
+
+
+def cycle_help_mode():
+    global HELP_MODE
+    HELP_MODE = (HELP_MODE % 3) + 1
+
+
+def get_help_mode() -> int:
+    return HELP_MODE
+
 
 def set_software_switch(enabled: bool):
     global SOFTWARE_SWITCH
@@ -170,6 +193,17 @@ def main():
                                     AIThinking = False
                                 moveUndone = False
                             # else: click in panel margin -> ignore
+                        # help button row (under restart)
+                        elif (btn_y + btn_h + padding) <= py < (btn_y + 2 * btn_h + padding):
+                            # click in help button area -> toggle HELP_MODE if clicked on right half
+                            if (2 * padding + half_w) <= px < (2 * padding + 2 * half_w):
+                                # only allow changing help mode when no piece is selected
+                                if sqSelected == ():
+                                    cycle_help_mode()
+                                else:
+                                    # ignore toggle while a piece is selected
+                                    pass
+                            # else: click in left area -> ignore
                         else:
                             # click in move log area -> clear selections (existing behaviour)
                             sqSelected = ()
@@ -180,17 +214,16 @@ def main():
                         col = x // SQ_SIZE
                         row = y // SQ_SIZE
                         clicked = (row, col)
-                        # If an invalid (rote) Auswahl aktiv ist, blockiere alle Klicks außer dem erneuten Klick
-                        # auf genau dieses rote Feld. So muss die rote Markierung zuerst gelöscht werden.
+                        # If an invalid (red) selection is active, block other clicks
+                        # but allow clicking the same red square to clear the invalid mark.
                         if invalidSq != ():
                             if clicked == invalidSq:
-                                # erneuter Klick auf das rote Feld löscht die Markierung
+                                # second click on the red square clears the invalid mark
+                                # keep any current selection (do not clear sqSelected)
                                 invalidSq = ()
-                                sqSelected = ()
-                                playerClicks = []
+                                # keep playerClicks as-is (typically [sqSelected])
                             else:
-                                # ignore other clicks solange invalidSq gesetzt ist
-                                # (keine Auswahl oder Züge starten)
+                                # ignore other clicks while invalidSq is set
                                 pass
                         else:
                             # kein rotes Feld aktiv — normale Verarbeitung
@@ -230,7 +263,19 @@ def main():
                                                 playerClicks = [sqSelected]
                                 else:
                                     # there is already a selected piece -> treat click as destination
-                                    playerClicks.append(clicked)
+                                    # Check if clicked square is a legal destination for the selected piece
+                                    sr, sc = sqSelected
+                                    dest_is_valid = any(
+                                        m.startRow == sr and m.startCol == sc and m.endRow == row and m.endCol == col
+                                        for m in validMoves
+                                    )
+                                    if dest_is_valid:
+                                        playerClicks.append(clicked)
+                                    else:
+                                        # mark as invalid (red) but keep the selection active
+                                        invalidSq = clicked
+                                        # keep playerClicks as only the selected square
+                                        playerClicks = [sqSelected]
                     if (
                         len(playerClicks) == 2 and humanTurn
                     ):  # after the second click, we need to move
@@ -353,6 +398,7 @@ def drawBoard(screen):
 
 def highlightSquares(screen, gs, validMoves, sqSelected, invalidSq):
     # highlight invalid selection (must be clicked again to clear) only if there is a piece
+    help_mode = get_help_mode()
     if invalidSq != ():
         r, c = invalidSq
         if gs.board[r][c] != "--":
@@ -361,15 +407,15 @@ def highlightSquares(screen, gs, validMoves, sqSelected, invalidSq):
             rgb = FieldConfig.get_highlight_color("invalid")
             s.fill(p.Color(*rgb))
             screen.blit(s, (c * SQ_SIZE, r * SQ_SIZE))
+
+    # Wenn ein Quadrat selektiert ist: normale Hervorhebungslogik (immer sichtbar)
     if sqSelected != ():
         r, c = sqSelected
         # make sure that each user can use highlighting ability for its own pieces
         if gs.board[r][c][0] == ("w" if gs.whiteToMove else "b"):
             # 1. highlight the selected square
             s = p.Surface((SQ_SIZE, SQ_SIZE))
-            s.set_alpha(
-                100
-            )  # zero value is full transparentand 255 means no transperency
+            s.set_alpha(100)  # zero value is fully transparent
             rgb = FieldConfig.get_highlight_color("selected")
             s.fill(p.Color(*rgb))
             screen.blit(s, (c * SQ_SIZE, r * SQ_SIZE))
@@ -383,6 +429,45 @@ def highlightSquares(screen, gs, validMoves, sqSelected, invalidSq):
                         rgb = FieldConfig.get_highlight_color("move")
                     s.fill(p.Color(*rgb))
                     screen.blit(s, (move.endCol * SQ_SIZE, move.endRow * SQ_SIZE))
+        return
+
+    # HELP_MODE 1: keine Highlights außer rot (invalid) und Auswahl (blau)
+    if help_mode == 1:
+        return
+
+    # Kein Quadrat selektiert
+    if help_mode == 2:
+        # Standardverhalten: keine zusätzlichen Hervorhebungen
+        return
+
+    # help_mode == 3: erweitertes Hilfe‑Mode
+    # - markiere alle Figuren mit gültigen moves (für Seiten am Zug) lila (hint)
+    # - markiere alle möglichen capture‑Ziele grün
+    # Build maps to avoid overdrawing
+    starts = set()
+    captures = set()
+    for move in validMoves:
+        # nur Züge der gerade am Zug befindlichen Seite
+        if (move.pieceMoved[0] == ('w' if gs.whiteToMove else 'b')):
+            starts.add((move.startRow, move.startCol))
+            if move.isCapture:
+                captures.add((move.endRow, move.endCol))
+
+    # Draw starts as hint (lila)
+    s = p.Surface((SQ_SIZE, SQ_SIZE))
+    s.set_alpha(120)
+    hint_rgb = FieldConfig.get_highlight_color('hint')
+    s.fill(p.Color(*hint_rgb))
+    for (sr, sc) in starts:
+        screen.blit(s, (sc * SQ_SIZE, sr * SQ_SIZE))
+
+    # Draw captures as capture color
+    s2 = p.Surface((SQ_SIZE, SQ_SIZE))
+    s2.set_alpha(150)
+    cap_rgb = FieldConfig.get_highlight_color('capture')
+    s2.fill(p.Color(*cap_rgb))
+    for (er, ec) in captures:
+        screen.blit(s2, (ec * SQ_SIZE, er * SQ_SIZE))
 
 def drawPieces(screen, board):
     for r in range(DIMENSION):
@@ -498,7 +583,23 @@ def drawRightPanel(screen, gs, font):
     screen.blit(restart_text, btn_restart.move((btn_restart.width - restart_text.get_width()) // 2,
                                                (btn_restart.height - restart_text.get_height()) // 2))
 
-    # Move log under buttons
+    # Hilfe‑Button (unter Neustart)
+    help_btn_y = btn_y + btn_h + padding
+    btn_help = p.Rect(BOARD_WIDTH + 2 * padding + half_w, help_btn_y, half_w, btn_h)
+    # Draw help button background based on HELP_MODE
+    if get_help_mode() == 1:
+        p.draw.rect(screen, p.Color("lightgray"), btn_help)
+    elif get_help_mode() == 2:
+        p.draw.rect(screen, p.Color(*FieldConfig.get_highlight_color("move")), btn_help)
+    else:
+        p.draw.rect(screen, p.Color(*FieldConfig.get_highlight_color("capture")), btn_help)
+    p.draw.rect(screen, p.Color("black"), btn_help, 2)
+    help_labels = {1: "Hilfe: Keine", 2: "Hilfe: ein", 3: "Hilfe: voll"}
+    help_text = font.render(help_labels.get(get_help_mode(), "Hilfe"), True, p.Color("black"))
+    screen.blit(help_text, btn_help.move((btn_help.width - help_text.get_width()) // 2,
+                                         (btn_help.height - help_text.get_height()) // 2))
+
+    # Move log under buttons (shift down to account for help button)
     moveLog = gs.moveLog
     moveTexts = []
     for i in range(0, len(moveLog), 2):
@@ -506,7 +607,7 @@ def drawRightPanel(screen, gs, font):
         if i + 1 < len(moveLog):
             moveString += str(moveLog[i + 1])
         moveTexts.append(moveString)
-    textY = btn_y + btn_h + padding
+    textY = btn_y + btn_h + padding + btn_h + padding
     lineSpacing = 5
     for t in moveTexts:
         textObject = font.render(t, True, p.Color("white"))

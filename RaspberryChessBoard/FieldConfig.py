@@ -19,6 +19,8 @@ HIGHLIGHT_COLORS = {
     "capture": (0, 255, 0),          # grün
     # Ungültige Auswahl (muss erst zurückgesetzt werden)
     "invalid": (255, 0, 0),          # rot
+    # Hilfsfarbe (z.B. lila für erweiterte Hilfe)
+    "hint": (180, 0, 180),
     # Board base colors (falls UI benötigt, z.B. erase overlay)
     "default_light": (255, 255, 255),
     "default_dark": (128, 128, 128),
