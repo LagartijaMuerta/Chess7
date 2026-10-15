@@ -113,3 +113,45 @@ else:
         for col in range(8):
             coord = FILES[col] + str(8 - row)
             FIELD_STATIC[coord] = _default_field_entry(row, col)
+
+# Aktuelle Auswahl (coord als String, z.B. 'd2' oder None)
+CURRENT_SELECTED = None
+
+
+def select_field(coord: str):
+    """
+    Wählt ein Feld als 'selected' aus.
+
+    Rückgabe: dict mit folgenden Schlüsseln:
+      - coord: gewähltes Feld (string)
+      - LED_group_1: Liste der Eckkoordinaten
+      - LED_group_2: Liste der Seitenmittenkoordinaten
+      - color: RGB Triple der Highlight‑Farbe für 'selected'
+    Bei ungültigem Feld wird None zurückgegeben.
+    """
+    global CURRENT_SELECTED
+    if not coord or not isinstance(coord, str):
+        return None
+    coord = coord.strip().lower()
+    if coord not in FIELD_STATIC:
+        return None
+    CURRENT_SELECTED = coord
+    entry = FIELD_STATIC[coord]
+    return {
+        "coord": coord,
+        "LED_group_1": entry.get("LED_group_1"),
+        "LED_group_2": entry.get("LED_group_2"),
+        "color": get_highlight_color("selected"),
+    }
+
+
+def deselect_field():
+    """Hebt die aktuelle Auswahl auf."""
+    global CURRENT_SELECTED
+    CURRENT_SELECTED = None
+    return True
+
+
+def get_selected():
+    """Gibt die aktuell ausgewählte Feldkennung oder None zurück."""
+    return CURRENT_SELECTED

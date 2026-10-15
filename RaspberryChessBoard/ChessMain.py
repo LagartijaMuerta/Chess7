@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+ï»¿# -*- coding: utf-8 -*-
 """
 This is our maon driver. It will be responsible for handling user input
 and displaying the current GameState object.
@@ -34,6 +34,18 @@ SQ_SIZE = BOARD_HEIGHT // DIMENSION
 # for animation later on
 MAX_FPS = 15
 IMAGES = {}
+
+# Softwareâ€‘Schalter: True = lokale Steuerung (Maus/Tastatur) aktiv
+SOFTWARE_SWITCH = True
+
+
+def set_software_switch(enabled: bool):
+    global SOFTWARE_SWITCH
+    SOFTWARE_SWITCH = bool(enabled)
+
+
+def get_software_switch() -> bool:
+    return SOFTWARE_SWITCH
 
 
 """
@@ -111,7 +123,15 @@ def main():
                         btn_y = padding * 2 + status_h
                         # top status area
                         if padding <= py < padding + status_h:
-                            # clicked status fields -> no action
+                            # clicked status fields: detect which status rect was clicked
+                            # rects layout must match drawRightPanel
+                            rect_black = p.Rect(padding, padding, half_w, status_h)
+                            rect_white = p.Rect(2 * padding + half_w, padding, half_w, status_h)
+                            # px,py are local to the right panel
+                            if rect_white.collidepoint(px, py):
+                                # White status clicked -> toggle software switch
+                                set_software_switch(not get_software_switch())
+                            # black status is only indicator; no action
                             pass
                         # buttons row
                         elif btn_y <= py < btn_y + btn_h:
@@ -160,20 +180,20 @@ def main():
                         col = x // SQ_SIZE
                         row = y // SQ_SIZE
                         clicked = (row, col)
-                        # If an invalid (rote) Auswahl aktiv ist, blockiere alle Klicks außer dem erneuten Klick
-                        # auf genau dieses rote Feld. So muss die rote Markierung zuerst gelöscht werden.
+                        # If an invalid (rote) Auswahl aktiv ist, blockiere alle Klicks auÃŸer dem erneuten Klick
+                        # auf genau dieses rote Feld. So muss die rote Markierung zuerst gelÃ¶scht werden.
                         if invalidSq != ():
                             if clicked == invalidSq:
-                                # erneuter Klick auf das rote Feld löscht die Markierung
+                                # erneuter Klick auf das rote Feld lÃ¶scht die Markierung
                                 invalidSq = ()
                                 sqSelected = ()
                                 playerClicks = []
                             else:
                                 # ignore other clicks solange invalidSq gesetzt ist
-                                # (keine Auswahl oder Züge starten)
+                                # (keine Auswahl oder ZÃ¼ge starten)
                                 pass
                         else:
-                            # kein rotes Feld aktiv — normale Verarbeitung
+                            # kein rotes Feld aktiv â€” normale Verarbeitung
                             # click on previously marked invalid square clears it (handled above)
                             # clicking the currently selected square unselects it
                             if clicked == sqSelected:
@@ -443,16 +463,20 @@ def drawRightPanel(screen, gs, font):
     # Draw status backgrounds
     p.draw.rect(screen, p.Color("darkgray"), rect_black)
     p.draw.rect(screen, p.Color("darkgray"), rect_white)
-    # Highlight active player
+
+    # Right status rect is the PLC toggle. If PLC controls (software switch OFF) highlight green.
+    plc_active = not get_software_switch()
     active_rgb = FieldConfig.get_highlight_color("capture")
-    if not gs.whiteToMove:
-        p.draw.rect(screen, p.Color(*active_rgb), rect_black)
-    else:
+    if plc_active:
         p.draw.rect(screen, p.Color(*active_rgb), rect_white)
 
-    # Texts
-    black_text = font.render("Schwarz ist am Zug", True, p.Color("black"))
-    white_text = font.render("Weiss ist am Zug", True, p.Color("black"))
+    # Left status text: show which side is to move (no green highlight anymore)
+    left_label = "Weiss ist am Zug" if gs.whiteToMove else "Schwarz ist am Zug"
+    black_text = font.render(left_label, True, p.Color("black"))
+
+    # Right status text: PLC ON when PLC controls, otherwise PLC OFF
+    right_label = "PLC ON" if plc_active else "PLC OFF"
+    white_text = font.render(right_label, True, p.Color("black"))
     screen.blit(black_text, rect_black.move((rect_black.width - black_text.get_width()) // 2,
                                            (rect_black.height - black_text.get_height()) // 2))
     screen.blit(white_text, rect_white.move((rect_white.width - white_text.get_width()) // 2,
