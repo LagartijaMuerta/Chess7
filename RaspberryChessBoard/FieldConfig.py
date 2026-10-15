@@ -44,7 +44,12 @@ def _default_field_entry(row, col):
 FIELD_STATIC = {}
 
 # Mögliche CSV‑pfade (prüft Projekt‑Root und den von dir angegebenen absoluten Pfad)
-CANDIDATE_PATHS = ["field_leds.csv", r"F:\Projekte\RaspberryChessBoard\field_leds.csv"]
+module_dir = os.path.dirname(__file__)
+CANDIDATE_PATHS = [
+    os.path.join(module_dir, "field_leds.csv"),
+    "field_leds.csv",
+    r"F:\Projekte\RaspberryChessBoard\field_leds.csv",
+]
 
 csv_path = next((p for p in CANDIDATE_PATHS if os.path.exists(p)), None)
 
@@ -52,6 +57,7 @@ if csv_path:
     # Versuche mehrere Encodings, entscheide das passende
     encodings_to_try = ["utf-8", "utf-8-sig", "cp1252", "iso-8859-1"]
     encoding_used = None
+    detected_dialect = None
     for enc in encodings_to_try:
         try:
             with open(csv_path, newline="", encoding=enc) as testf:
@@ -68,6 +74,7 @@ if csv_path:
                 # iterate one row to force decoding
                 _ = next(iter(reader), None)
             encoding_used = enc
+            detected_dialect = dialect
             break
         except Exception:
             continue
@@ -77,9 +84,34 @@ if csv_path:
 
     # Nun mit dem ermittelten Encoding vollständig parsen
     with open(csv_path, newline="", encoding=encoding_used) as csvfile:
-        reader = csv.DictReader(csvfile)
+        # use detected dialect from sniff phase when available
+        if detected_dialect is not None:
+            reader = csv.DictReader(csvfile, dialect=detected_dialect)
+        else:
+            reader = csv.DictReader(csvfile)
+        # If header parsing failed (e.g., semicolon delimiter), retry with ';'
+        if not reader.fieldnames or "coord" not in [fn.lower() for fn in (reader.fieldnames or [])]:
+            csvfile.seek(0)
+            reader = csv.DictReader(csvfile, delimiter=';')
+        # Normalize fieldnames (remove BOM and whitespace)
+        if reader.fieldnames:
+            reader.fieldnames = [fn.lstrip('\ufeff').strip() for fn in reader.fieldnames]
+        # Build a mapping from expected column keys to actual header names
+        # Expected keys: coord, LED_group_1, LED_group_2, fieldColor
+        actual_names = {fn.lower(): fn for fn in (reader.fieldnames or [])}
+        def find_header(token):
+            token = token.lower().replace('_', '').replace(' ', '')
+            for low, orig in actual_names.items():
+                key = low.replace('_', '').replace(' ', '')
+                if token in key or key in token:
+                    return orig
+            return None
+        hdr_coord = find_header('coord') or 'coord'
+        hdr_g1 = find_header('led_group_1') or find_header('ledgroup1') or 'LED_group_1'
+        hdr_g2 = find_header('led_group_2') or find_header('ledgroup2') or 'LED_group_2'
+        hdr_color = find_header('fieldcolor') or find_header('field_color') or 'fieldColor'
         for row in reader:
-            coord = (row.get("coord") or "").strip()
+            coord = (row.get(hdr_coord) or "").strip()
             if not coord or len(coord) != 2:
                 continue
             # determine board indices for fallback color
@@ -88,8 +120,8 @@ if csv_path:
             r = 8 - rank
             c = file_idx
             try:
-                g1_raw = row.get("LED_group_1", "").strip()
-                g2_raw = row.get("LED_group_2", "").strip()
+                g1_raw = (row.get(hdr_g1) or "").strip()
+                g2_raw = (row.get(hdr_g2) or "").strip()
                 g1 = ast.literal_eval(g1_raw) if g1_raw else _default_field_entry(r, c)["LED_group_1"]
                 g2 = ast.literal_eval(g2_raw) if g2_raw else _default_field_entry(r, c)["LED_group_2"]
                 # validate shape (4 pairs)
@@ -97,7 +129,7 @@ if csv_path:
                     g1 = _default_field_entry(r, c)["LED_group_1"]
                 if not (isinstance(g2, (list, tuple)) and len(g2) == 4):
                     g2 = _default_field_entry(r, c)["LED_group_2"]
-                color = (row.get("fieldColor") or "").strip().lower()
+                color = (row.get(hdr_color) or "").strip().lower()
                 if color not in ("light", "dark"):
                     color = _default_field_entry(r, c)["fieldColor"]
                 FIELD_STATIC[coord] = {
@@ -148,7 +180,27 @@ def select_field(coord: str):
 def deselect_field():
     """Hebt die aktuelle Auswahl auf."""
     global CURRENT_SELECTED
+    prev = CURRENT_SELECTED
     CURRENT_SELECTED = None
+    # Versuche, zugehörige LED auf Grundfarbe zurückzusetzen (falls LED‑Controller vorhanden)
+    try:
+        # Lokaler Import, um zirkuläre Imports zu vermeiden
+        from . import led_control
+
+        ctl = led_control.get_default_controller()
+        # Falls Controller noch nicht initialisiert ist, initialisiere im Simulationsmodus nicht automatisch
+        try:
+            ctl.initialize(auto_init=True)
+        except Exception:
+            pass
+        if prev:
+            try:
+                ctl.set_field_state(prev, 'base')
+            except Exception:
+                pass
+    except Exception:
+        # kein Controller verfügbar: still ignorieren
+        pass
     return True
 
 
