@@ -106,7 +106,7 @@ def main():
     loadImages()
     running = True
     sqSelected = ()  # simply to keep track of the last click for the user
-    invalidSq = ()  # stores a square that was clicked but is invalid for moving (red)
+    invalidMoves = set()  # stores squares (row,col) that were clicked as invalid (red)
     # playerClicks: is a list to keep track of player clicks
     # to act like a vector to move the piece from one square to another
     playerClicks = []
@@ -165,7 +165,12 @@ def main():
                                 validMoves = gs.getValidMoves()
                                 sqSelected = ()
                                 playerClicks = []
-                                invalidSq = ()
+                                invalidMoves.clear()
+                                # clear persistent invalid flags on undo
+                                try:
+                                    FieldConfig.clear_all_invalids()
+                                except Exception:
+                                    pass
                                 moveMade = True
                                 animate = False
                                 if AIThinking and moveFinderProcess is not None:
@@ -181,7 +186,12 @@ def main():
                                 validMoves = gs.getValidMoves()
                                 sqSelected = ()
                                 playerClicks = []
-                                invalidSq = ()
+                                invalidMoves.clear()
+                                # clear persistent invalid flags on restart
+                                try:
+                                    FieldConfig.clear_all_invalids()
+                                except Exception:
+                                    pass
                                 moveMade = False
                                 animate = False
                                 gameOver = False
@@ -208,22 +218,27 @@ def main():
                             # click in move log area -> clear selections (existing behaviour)
                             sqSelected = ()
                             playerClicks = []
-                            invalidSq = ()
+                            invalidMoves.clear()
                     else:
                         # board click
                         col = x // SQ_SIZE
                         row = y // SQ_SIZE
                         clicked = (row, col)
-                        # If an invalid (red) selection is active, block other clicks
-                        # but allow clicking the same red square to clear the invalid mark.
-                        if invalidSq != ():
-                            if clicked == invalidSq:
-                                # second click on the red square clears the invalid mark
+                        # If any invalid (red) selections are active, block other clicks
+                        # but allow clicking the same red square(s) to toggle the invalid mark.
+                        if invalidMoves:
+                            if clicked in invalidMoves:
+                                # toggle: remove the invalid mark on repeated click
+                                invalidMoves.remove(clicked)
+                                # also clear persistent flag for the field
+                                try:
+                                    coord_str = chr(ord('a') + col) + str(8 - row)
+                                    FieldConfig.set_invalid_move(coord_str, False)
+                                except Exception:
+                                    pass
                                 # keep any current selection (do not clear sqSelected)
-                                invalidSq = ()
-                                # keep playerClicks as-is (typically [sqSelected])
                             else:
-                                # ignore other clicks while invalidSq is set
+                                # ignore other clicks while invalid mark(s) present
                                 pass
                         else:
                             # kein rotes Feld aktiv — normale Verarbeitung
@@ -232,7 +247,7 @@ def main():
                             if clicked == sqSelected:
                                 sqSelected = ()
                                 playerClicks = []
-                                invalidSq = ()
+                                invalidMoves.clear()
                             else:
                                 # If no piece currently selected, this click is a selection attempt.
                                 if sqSelected == ():
@@ -244,7 +259,15 @@ def main():
                                     else:
                                         # wrong color -> invalid selection
                                         if piece[0] != ("w" if gs.whiteToMove else "b"):
-                                            invalidSq = clicked
+                                            # wrong color -> mark invalid and clear any selection
+                                            invalidMoves.add(clicked)
+                                            # also set persistent invalidMove flag for the field
+                                            try:
+                                                # convert to coord string like 'd2'
+                                                coord_str = chr(ord('a') + col) + str(8 - row)
+                                                FieldConfig.set_invalid_move(coord_str, True)
+                                            except Exception:
+                                                pass
                                             sqSelected = ()
                                             playerClicks = []
                                         else:
@@ -254,7 +277,8 @@ def main():
                                             )
                                             if not hasMoves:
                                                 # invalid because of rules (e.g. pinned, no legal moves)
-                                                invalidSq = clicked
+                                                # mark as invalid (red) and keep no selection
+                                                invalidMoves.add(clicked)
                                                 sqSelected = ()
                                                 playerClicks = []
                                             else:
@@ -273,12 +297,16 @@ def main():
                                         playerClicks.append(clicked)
                                     else:
                                         # mark as invalid (red) but keep the selection active
-                                        invalidSq = clicked
+                                        invalidMoves.add(clicked)
+                                        # also set persistent invalidMove flag for the field
+                                        try:
+                                            coord_str = chr(ord('a') + col) + str(8 - row)
+                                            FieldConfig.set_invalid_move(coord_str, True)
+                                        except Exception:
+                                            pass
                                         # keep playerClicks as only the selected square
                                         playerClicks = [sqSelected]
-                    if (
-                        len(playerClicks) == 2 and humanTurn
-                    ):  # after the second click, we need to move
+                    if (len(playerClicks) == 2 and humanTurn):  # after the second click, we need to move
                         move = Move(playerClicks[0], playerClicks[1], gs.board)
                         for i in range(len(validMoves)):
                             if move == validMoves[i]:
@@ -288,7 +316,7 @@ def main():
                                 animate = True
                                 sqSelected = ()  # reset for the next turn
                                 playerClicks = []  # reset for the next turn
-                                invalidSq = ()
+                                invalidMoves.clear()
                         if not moveMade:
                             # keep first selection only
                             if sqSelected != ():
@@ -301,7 +329,7 @@ def main():
                     gs.undoMove()
                     sqSelected = ()
                     playerClicks = []
-                    invalidSq = ()
+                    invalidMoves.clear()
                     moveMade = True
                     animate = False
                     gameOver = False
@@ -314,7 +342,7 @@ def main():
                     validMoves = gs.getValidMoves()
                     sqSelected = ()
                     playerClicks = []
-                    invalidSq = ()
+                    invalidMoves.clear()
                     moveMade = False
                     animate = False
                     gameOver = False
@@ -356,7 +384,7 @@ def main():
             moveMade = False
             animate = False
             moveUndone = False
-        drawGameState(screen, gs, validMoves, sqSelected, moveLogFont, invalidSq)
+        drawGameState(screen, gs, validMoves, sqSelected, moveLogFont, invalidMoves)
         # check if the game ends either by stalemate or by a checkmate
         if gs.checkmate or gs.stalemate:
             gameOver = True
@@ -375,9 +403,9 @@ def main():
 """ responsible for the all the graphics needed for a current game state """
 
 
-def drawGameState(screen, gs, validMoves, sqSelected, moveLogFont, invalidSq):
+def drawGameState(screen, gs, validMoves, sqSelected, moveLogFont, invalidMoves):
     drawBoard(screen)  # draw the squares on the board right :)
-    highlightSquares(screen, gs, validMoves, sqSelected, invalidSq)
+    highlightSquares(screen, gs, validMoves, sqSelected, invalidMoves)
     drawPieces(screen, gs.board)  # just draw the pieces on the top of the board
     drawRightPanel(screen, gs, moveLogFont)
 
@@ -396,17 +424,39 @@ def drawBoard(screen):
 """ highlight the square selected and valid moves for the piece selected """
 
 
-def highlightSquares(screen, gs, validMoves, sqSelected, invalidSq):
-    # highlight invalid selection (must be clicked again to clear) only if there is a piece
+def highlightSquares(screen, gs, validMoves, sqSelected, invalidMoves):
+    # highlight invalid selections (must be clicked again to clear) only if there is a piece
     help_mode = get_help_mode()
-    if invalidSq != ():
-        r, c = invalidSq
-        if gs.board[r][c] != "--":
-            s = p.Surface((SQ_SIZE, SQ_SIZE))
-            s.set_alpha(150)
-            rgb = FieldConfig.get_highlight_color("invalid")
-            s.fill(p.Color(*rgb))
-            screen.blit(s, (c * SQ_SIZE, r * SQ_SIZE))
+    # Draw temporary invalidMarks and persistent invalidMove flags (FieldConfig)
+    drawn = set()
+    if invalidMoves:
+        for (r, c) in list(invalidMoves):
+            if gs.board[r][c] != "--":
+                s = p.Surface((SQ_SIZE, SQ_SIZE))
+                s.set_alpha(150)
+                rgb = FieldConfig.get_highlight_color("invalid")
+                s.fill(p.Color(*rgb))
+                screen.blit(s, (c * SQ_SIZE, r * SQ_SIZE))
+                drawn.add((r, c))
+    # persistent invalidMove flags
+    for coord, entry in FieldConfig.FIELD_STATIC.items():
+        try:
+            if entry.get("invalidMove", False):
+                # convert coord to r,c
+                file = coord[0]
+                rank = int(coord[1])
+                cr = 8 - rank
+                cc = ord(file) - ord('a')
+                if (cr, cc) in drawn:
+                    continue
+                if gs.board[cr][cc] != "--":
+                    s = p.Surface((SQ_SIZE, SQ_SIZE))
+                    s.set_alpha(150)
+                    rgb = FieldConfig.get_highlight_color("invalid")
+                    s.fill(p.Color(*rgb))
+                    screen.blit(s, (cc * SQ_SIZE, cr * SQ_SIZE))
+        except Exception:
+            continue
 
     # Wenn ein Quadrat selektiert ist: normale Hervorhebungslogik (immer sichtbar)
     if sqSelected != ():

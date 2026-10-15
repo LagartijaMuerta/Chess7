@@ -41,6 +41,8 @@ def _default_field_entry(row, col):
         "LED_group_1": [[0, 0], [0, 0], [0, 0], [0, 0]],
         "LED_group_2": [[0, 0], [0, 0], [0, 0], [0, 0]],
         "fieldColor": base_color,
+        # per-field flag: an explicitly marked invalid destination (persisted in FIELD_STATIC)
+        "invalidMove": False,
     }
 
 FIELD_STATIC = {}
@@ -138,6 +140,7 @@ if csv_path:
                     "LED_group_1": [[int(x[0]), int(x[1])] for x in g1],
                     "LED_group_2": [[int(x[0]), int(x[1])] for x in g2],
                     "fieldColor": color,
+                    "invalidMove": False,
                 }
             except Exception:
                 FIELD_STATIC[coord] = _default_field_entry(r, c)
@@ -177,6 +180,79 @@ def select_field(coord: str):
         "LED_group_2": entry.get("LED_group_2"),
         "color": get_highlight_color("selected"),
     }
+
+
+def set_invalid_move(coord: str, enabled: bool = True):
+    """
+    Markiert ein Feld dauerhaft als invalidMove (bool in FIELD_STATIC) und
+    versucht, die zugehörigen LEDs zu setzen/entfernen über led_control.
+
+    enabled=True -> markiere als invalidMove (LED_group_2 erhält 'invalid'-Farbe)
+    enabled=False -> entferne das Flag und setze das Feld auf 'base'
+    """
+    if not coord or not isinstance(coord, str):
+        return False
+    coord = coord.strip().lower()
+    if coord not in FIELD_STATIC:
+        return False
+    FIELD_STATIC[coord]["invalidMove"] = bool(enabled)
+    # try to update LEDs if controller exists
+    try:
+        from . import led_control
+
+        ctl = led_control.get_default_controller()
+        try:
+            ctl.initialize(auto_init=True)
+        except Exception:
+            pass
+        if enabled:
+            # invalidMove maps to LED_group_2 (same as 'invalid')
+            try:
+                ctl.set_field_state(coord, 'invalid')
+            except Exception:
+                pass
+        else:
+            try:
+                ctl.set_field_state(coord, 'base')
+            except Exception:
+                pass
+    except Exception:
+        # no controller available: ignore
+        pass
+    # Try to request an immediate UI redraw via pygame event so the change is visible
+    try:
+        import pygame as p
+        # Post a user event to wake the main loop; include coord info
+        ev = p.event.Event(p.USEREVENT, {'subtype': 'invalid_move_changed', 'coord': coord, 'enabled': bool(enabled)})
+        p.event.post(ev)
+    except Exception:
+        # pygame not available / posting failed: ignore
+        pass
+    return True
+
+
+def is_invalid_move(coord: str) -> bool:
+    """Gibt True zurück, wenn das Feld als invalidMove markiert ist."""
+    if not coord or not isinstance(coord, str):
+        return False
+    coord = coord.strip().lower()
+    entry = FIELD_STATIC.get(coord)
+    if not entry:
+        return False
+    return bool(entry.get("invalidMove", False))
+
+
+def clear_all_invalids():
+    """
+    Entfernt das invalidMove‑Flag für alle Felder und versucht, die LEDs zurückzusetzen.
+    """
+    for coord in list(FIELD_STATIC.keys()):
+        try:
+            set_invalid_move(coord, False)
+        except Exception:
+            # ignore per-field failures
+            pass
+    return True
 
 
 def deselect_field():
